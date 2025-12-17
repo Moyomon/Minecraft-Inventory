@@ -1,0 +1,453 @@
+<svg id="Content"></svg>
+<script type="module">
+
+import {SVG}		from './SVG.js'
+import {Rect}		from './Rect.js'
+import {Sprite}		from './Sprite.js'
+import {NineSlice}	from './NineSlice.js'
+
+class Content extends SVG{
+	constructor(){
+		super('#Content').add(
+			new Inventory(
+				new Item('#Inventory-grass',64),
+				new Item('#Inventory-golden_carrot',64),
+				new Item('#Inventory-pickaxe',1),
+				new Item('#Inventory-axe',1),
+				new Item('#Inventory-ork',64),
+				new Item('#Inventory-stick',64),
+				new Item('#Inventory-chest',32),
+				new Item('#Inventory-diamond',32),
+			)
+		)
+	}
+}
+
+class Inventory extends SVG{
+	constructor(...items){
+		super('g.inventory',new Sprite('Inventory.svg'))
+		var dialog = new Dialog(new Rect(0,0,704,664)).add(
+			new Table(28,344).grid(9,3).class('storage'),
+			new Table(28,572).grid(9,1).class('hotbar'),
+			new Table.Armor(28,28),
+			new Table.Crafting(388,72),
+		)
+		var data = new Inventory.Manager(items,dialog.getSlots())
+		var mouse = new MouseAction(e=>{
+			var slot = data.getSlot(e.id)
+			switch(e.type){
+				case 'PICKUP_ALL'	:mouse.pickup(slot)			;break
+				case 'PICKUP_HALF'	:mouse.pickup(slot,'HALF')	;break
+				case 'PLACE_ALL'	:mouse.place(slot)			;break
+				case 'PLACE_ONE'	:mouse.place(slot,1)		;break
+			}
+			data.add(mouse.item)
+			this.add(mouse.item)
+			dialog.add(...data.selectOccupiedSlots().map(v=>v.item))
+		})
+		this.add(dialog.add(...items),mouse.hook)
+	}
+}
+
+Inventory.Manager = class{
+	constructor(items,slots){
+		this.items = items
+		this.slots = slots
+		this.items.forEach((item,i)=>this.slots[i].set(item))
+	}
+	selectOccupiedSlots(){
+		return this.slots.filter(v=>v.occupied)
+	}
+	getSlot(id){
+		return this.slots.find(v=>v.id==id)
+	}
+	add(item){
+		if(item && this.items.includes(item)==false) this.items.push(item)
+		return this.update()
+	}
+	update(){
+		this.selectOccupiedSlots().forEach(v=>{
+			if(this.items.includes(v.item)) return
+			this.items.push(v.item)
+		})
+		this.items.filter(v=>v.count==0).map(v=>v.remove())
+		this.items = this.items.filter(v=>v.count>0)
+		this.slots.filter(v=>this.items.includes(v.item)==false).forEach(v=>v.item=null)
+		return this
+	}
+}
+
+class MouseAction{
+	constructor(listener){
+		this.item = null
+		this.hook = {
+			click:e=>{
+				if(e.target.dataset.type){
+					var type = this.occupied?'PLACE_ALL':'PICKUP_ALL'
+					listener({type,id:e.target.dataset.id})
+				}
+				this.position(e)
+			},
+			contextmenu:e=>{
+				if(e.target.dataset.type){
+					e.preventDefault()
+					var type = this.occupied?'PLACE_ONE':'PICKUP_HALF'
+					listener({type,id:e.target.dataset.id})
+				}
+				this.position(e)
+			},
+			mousemove:e=>{
+				this.position(e)
+			},
+		}
+	}
+	position(e){
+		if(this.occupied) this.item.position(e.clientX-32,e.clientY-32)
+		return this
+	}
+	pickup(slot,count){
+		if(slot.occupied){
+			if(count=='HALF') count = Math.ceil(slot.item.count/2)
+			this.item = slot.item.slice(count)
+		}
+		return this
+	}
+	place(slot,count){
+		if(slot.occupied){
+			if(slot.item.type==this.item.type){
+				this.item.move(slot.item,count)
+			}else{
+				this.item = slot.getAndReplace(this.item)
+			}
+		}else{
+			slot.set(this.item.slice(count))
+		}
+		if(this.occupied==false) this.item = null
+		return this
+	}
+	get occupied(){
+		if(this.item==null) return false
+		return this.item.count>0
+	}
+}
+
+class Dialog extends SVG{
+	constructor(rect,...a){
+		super('g.dialog')
+		this.rect = rect
+		this.tables = []
+		this.add(new Dialog.Background(rect),...a).resize()
+		window.addEventListener('resize',e=>this.resize())
+	}
+	getSlots(){
+		return [].concat(...this.tables.map(v=>v.slots))
+	}
+	addObject(v){
+		if(v instanceof Table) this.tables.push(v)
+		return super.addObject(v)
+	}
+	resize(){
+		var d = document.documentElement.getBoundingClientRect()
+		var r = this.rect
+		return this.position((d.width-r.width)/2,(d.height-r.height)/2)
+	}
+}
+
+Dialog.Background = class extends SVG{
+	constructor(rect){
+		super('g.background')
+		var slice = new NineSlice('#Inventory-dialog',new Rect(0,0,48,48),16)
+		this.add(slice,slice.create(rect))
+	}
+}
+
+class Table extends SVG{
+	constructor(x,y){
+		super('g.table')
+		this.rect	= new Rect(x,y,72,72)
+		this.slots	= []
+	}
+	grid(w,h){
+		var rects = []
+		var r = this.rect
+		for(var y=0;y<h;y++){
+			for(var x=0;x<w;x++) rects.push(r.add(r.width*x,r.height*y))
+		}
+		this.slots = rects.map(v=>new Slot('#Inventory-slot',v))
+		return this.add(...this.slots)
+	}
+}
+
+Table.Armor = class extends Table{
+	constructor(...a){
+		super(...a).class('armor')
+		var r = this.rect
+		this.slots = [
+			new Slot('#Inventory-slot_head',	r),
+			new Slot('#Inventory-slot_chest',	r.add(0,r.height)),
+			new Slot('#Inventory-slot_legs',	r.add(0,r.height*2)),
+			new Slot('#Inventory-slot_feet',	r.add(0,r.height*3)),
+			new Slot('#Inventory-slot_offhand',	r.add(r.width*4,r.height*3)),
+		]
+		this.add(...this.slots)
+	}
+}
+
+Table.Crafting = class extends Table{
+	constructor(...a){
+		super(...a).class('crafting')
+		var r = this.rect
+		this.slots = [
+			new Slot('#Inventory-slot',r),
+			new Slot('#Inventory-slot',r.add(0,r.height)),
+			new Slot('#Inventory-slot',r.add(r.width,0)),
+			new Slot('#Inventory-slot',r.add(r.width,r.height)),
+			new Slot('#Inventory-slot',r.add(r.width*3,r.height/2)),
+		]
+		this.add(...this.slots)
+	}
+}
+
+class Slot extends SVG{
+	constructor(href,rect){
+		super('use.slot',{href},rect)
+		this.id		= this.uuid()
+		this.rect	= rect
+		this.item	= null
+		this.data({type:'Slot',id:this.id})
+	}
+	set(item){
+		var x = this.rect.x + (this.rect.width - item.rect.width)/2
+		var y = this.rect.y + (this.rect.height - item.rect.height)/2
+		this.item = item.position(x,y)
+		return this
+	}
+	getAndReplace(item){
+		var v = this.item
+		this.set(item)
+		return v
+	}
+	get occupied(){
+		if(this.item==null) return false
+		return this.item.count>0
+	}
+}
+
+class Item extends SVG{
+	constructor(type,count){
+		super('g.item')
+		var id = this.uuid()
+		this.id = id
+		this.type = type
+		this.rect = new Rect(0,0,64,64)
+		this.icon = new SVG('use.icon',{href:type},this.rect)
+		this.label = new Item.Label(62,56,5,'#fff','#333')
+		this.count = count
+		this.add(this.icon,this.label)
+	}
+	slice(count){
+		if(count==null) count = this.count
+		this.count -= count
+		return new Item(this.type,count)
+	}
+	move(to,count){
+		if(count==null) count = this.count
+		this.count -= count
+		to.count += count
+		return this
+	}
+	get count(){return this.value}
+	set count(n){
+		this.value = n
+		this.label.text = n==1?'':n
+	}
+}
+
+Item.Label = class extends SVG{
+	constructor(x,y,strokeWidth,fill,stroke){
+		super('g.label')
+		this.layers = [
+			new SVG('text',{x,y,stroke,'stroke-width':strokeWidth}),
+			new SVG('text',{x,y,fill}),
+		]
+		this.add(...this.layers)
+	}
+	set text(s){this.layers.forEach(v=>v.replace(s))}
+}
+
+new Content()
+
+</script>
+<style>
+
+body{
+	margin: 0;
+	background: #3c8527;
+}
+
+#Content{
+	width: 100%;
+	height: 100%;
+}
+
+svg .item{
+	pointer-events: none;
+}
+svg .slot{
+	pointer-events: auto;
+}
+
+svg text{
+	dominant-baseline: central;
+	font-family: "Noto Sans JP",sans-serif;
+	stroke-linejoin:round;
+	stroke-linecap:round;
+	user-select: none;
+}
+
+svg .item text{
+	text-anchor: end;
+	font-size: 24;
+}
+
+</style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
